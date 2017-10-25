@@ -8,7 +8,10 @@ parser = ap.ArgumentParser(description='Benchmarking test for dynamite.')
 
 parser.add_argument('-L', type=int, help='Size of the spin chain.', required=True)
 
-parser.add_argument('-H', choices=['MBL','long_range','SYK'], default='MBL', help='Hamiltonian to use', required=True)
+parser.add_argument('-H', choices=['MBL','long_range','SYK','ising','XX'],
+                    default='MBL', help='Hamiltonian to use', required=True)
+
+parser.add_argument('--sz', type=int, help='Use a subspace with total spin sz (only MBL Hamiltonian conserves spin).')
 
 parser.add_argument('-w', type=int, default=1, help='Magnitude of the disorder for MBL Hamiltonian.')
 
@@ -19,11 +22,17 @@ parser.add_argument('--evolve',action='store_true',help='Request that the Hamilt
 parser.add_argument('--init_state',type=int,default=0,help='The initial state for the evolution.')
 parser.add_argument('-t',type=float,default=1.0,help='The time to evolve for.')
 
+parser.add_argument('--mult',action='store_true',help='Simply multiply the Hamiltonian by a vector.')
+parser.add_argument('--mult_count',type=int,default=1,help='Number of times to repeat the multiplication.')
+
 parser.add_argument('--eigsolve',action='store_true',help='Request to solve for eigenvalues of the Hamiltonian.')
 parser.add_argument('--nev',type=int,default=1,help='The number of eigenpairs to solve for.')
 parser.add_argument('--target',type=int,help='The target for a shift-invert eigensolve.')
 
 args = parser.parse_args()
+
+if args.sz is not None and args.H != 'MBL':
+    raise ValueError('Only MBL Hamiltonian is spin conserving; cannot use -sz with other Hamiltonians.')
 
 slepc_args = args.slepc_args.split(' ')
 
@@ -32,22 +41,27 @@ config.initialize(slepc_args)
 
 from dynamite.operators import Sum,Product,IndexSum,Sigmax,Sigmay,Sigmaz
 from dynamite.tools import build_state,track_memory,get_max_memory_usage
+from dynamite.backend.backend import map_forward_single
 from dynamite.extras import Majorana as X
 from petsc4py.PETSc import Sys
 Print = Sys.Print
 
-stats = {
-    'MSC_build_time':None,
-    'mat_build_time':None,
-    'evolve_time':None,
-    'eigsolve_time':None,
-    'MaxRSS':None,
-}
+stats = {}
+
+# stats = {
+#     'MSC_build_time':None,
+#     'mat_build_time':None,
+#     'mult_time':None,
+#     'evolve_time':None,
+#     'eigsolve_time':None,
+#     'MaxRSS':None,
+# }
 
 track_memory()
 mem_type = 'all'
 
 config.global_L = args.L
+config.global_sz = args.sz
 
 if __debug__:
     Print('begin building dynamite operator')
@@ -73,16 +87,23 @@ elif args.H == 'long_range':
 elif args.H == 'SYK':
     seed(0)
     H = Sum(uniform(-1,1)*Product(X(idx) for idx in idxs) for idxs in combinations(range(args.L*2),4))
-
-H.use_shell = args.shell
+elif args.H == 'ising':
+    H = IndexSum(Sigmaz(0)*Sigmaz(1)) + 0.2*IndexSum(Sigmax())
+elif args.H == 'XX':
+    H = IndexSum(Sigmax(0)*Sigmax(1))
 
 start = default_timer()
 
 if __debug__:
-    Print('nnz:',H.nnz,'\ndensity:',H.density,'\nMSC size:',H.MSC_size)
+    Print('dim:',H.dim,'\nnnz:',H.nnz,'\ndensity:',H.density,'\nMSC size:',H.MSC_size)
     Print('dynamite operator built. building PETSc matrix...')
 
 stats['MSC_build_time'] = default_timer() - start
+
+# build a dummy matrix first to have equal profiling data
+
+H.build_mat()
+H.use_shell = args.shell
 
 start = default_timer()
 H.build_mat()
@@ -104,11 +125,36 @@ if args.evolve:
     if __debug__:
         Print('beginning evolution...')
     start = default_timer()
-    s = build_state(state=args.init_state)
+
+    if args.sz is None:
+        s = build_state(state=args.init_state)
+    else:
+        state = map_forward_single(args.L,args.sz,args.init_state)
+        s = build_state(state=state)
+
     H.evolve(s,t=args.t)
     stats['evolve_time'] = default_timer() - start
     if __debug__:
         Print('evolution complete.')
+
+if args.mult:
+    if __debug__:
+        Print('beginning multiplication...')
+    start = default_timer()
+
+    if args.sz is None:
+        s = build_state(state=args.init_state)
+    else:
+        state = map_forward_single(args.L,args.sz,args.init_state)
+        s = build_state(state=state)
+
+    r = s.copy()
+    for _ in range(args.mult_count):
+        H.get_mat().mult(s,r)
+        H.get_mat().mult(r,s)
+    stats['mult_time'] = default_timer() - start
+    if __debug__:
+        Print('multiplication complete.')
 
 H.destroy_mat()
 

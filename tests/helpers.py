@@ -17,16 +17,15 @@ CW = COMM_WORLD.tompi4py()
 PROC_0 = CW.Get_rank() == 0
 
 def dnm_to_np(H):
-    dim = 2**H.L
 
     if PROC_0:
-        ret = np.ndarray((dim,dim),dtype=np.complex128)
+        ret = np.ndarray((H.dim,H.dim),dtype=np.complex128)
 
     s1 = build_state(H.L)
     s2 = build_state(H.L)
 
     s1.set(0)
-    for i in range(dim):
+    for i in range(H.dim):
         if i > 0:
             s1.setValue(i-1,0)
         s1.setValue(i,1)
@@ -76,11 +75,11 @@ def compare_and_scatter(c,*args):
 
     return CW.bcast(r,root=0),msg
 
-def check_dnm_np(d,n):
+def check_dnm_np(d,n,full_space = True):
     d_np = dnm_to_np(d)
     d_norm = d.get_mat().norm(NormType.INFINITY)
 
-    return compare_and_scatter(_matrix_checks,n,d,d_np,d_norm)
+    return compare_and_scatter(_matrix_checks,n,d,d_np,d_norm,full_space)
 
 def check_vecs(d,n,max_nrm=0):
     d_np = vectonumpy(d)
@@ -147,7 +146,7 @@ def _vector_checks(d,n,max_nrm):
 
     return r,msg
 
-def _matrix_checks(n,d,dnm_np,dnm_norm):
+def _matrix_checks(n,d,dnm_np,dnm_norm,full_space):
     '''
     make the following checks:
       -- equality
@@ -180,10 +179,11 @@ numpy matrix: %s
 
     ### nnz
 
-    tmp = np.all(d.nnz==np.max(np.count_nonzero(n,axis=0)))
-    if not tmp:
-        msg += ('nnz not equal. dynamite nnz=%d, numpy nnz=%d\n'
-                % (d.nnz,np.max(np.count_nonzero(n,axis=0))))
+    if full_space:
+        tmp = np.all(d.nnz==np.max(np.count_nonzero(n,axis=0)))
+        if not tmp:
+            msg += ('nnz not equal. dynamite nnz=%d, numpy nnz=%d\n'
+                    % (d.nnz,np.max(np.count_nonzero(n,axis=0))))
 
     r = r and tmp
 
@@ -208,7 +208,7 @@ numpy matrix: %s
 
     ### qutip
 
-    if qtp is not None:
+    if qtp is not None and full_space:
         qtp_o = d.build_qutip().full()
         tmp = np.allclose(qtp_o,dnm_np)
         if not tmp:

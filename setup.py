@@ -54,7 +54,8 @@ def configure():
                 slepc4py.get_include(),
                 numpy.get_include()]
 
-    object_files = ['dynamite/backend/backend_impl.o']
+    object_files = ['dynamite/backend/mapping.o',
+                    'dynamite/backend/backend_impl.o']
 
     # check if we have nvcc, and thus should link to
     # the CUDA code
@@ -76,14 +77,16 @@ def extensions():
                   depends = ['dynamite/backend/backend_impl.h',
                              'dynamite/backend/backend_impl.c',
                              'dynamite/backend/cuda_shell.h',
-                             'dynamite/backend/cuda_shell.cu',],
+                             'dynamite/backend/cuda_shell.cu',
+                             'dynamite/backend/mapping.h',
+                             'dynamite/backend/mapping.c'],
                   **configure()),
     ]
 
 class MakeBuildExt(build_ext):
     def run(self):
         # build the backend_impl.o object file
-        make = check_output(['make','backend_impl.o'],cwd='dynamite/backend')
+        make = check_output(['make','default'],cwd='dynamite/backend')
         print(make.decode())
 
         # if we have nvcc, build the CUDA backend
@@ -95,7 +98,7 @@ class MakeBuildExt(build_ext):
 
 setup(
     name = "dynamite",
-    version = "0.0.2",
+    version = "0.0.3",
     author = "Greg Meyer",
     author_email = "gregory.meyer@berkeley.edu",
     description = "Fast direct evolution of quantum spin chains.",

@@ -6,31 +6,52 @@
 
 #undef  __FUNCT__
 #define __FUNCT__ "BuildMat_Full"
-PetscErrorCode BuildMat_Full(PetscInt L,PetscInt nterms,PetscInt* masks,PetscInt* signs,PetscScalar* coeffs,Mat *A)
+PetscErrorCode BuildMat_Full(PetscInt L,PetscInt sz,PetscInt nterms,PetscInt* masks,PetscInt* signs,PetscScalar* coeffs,Mat *A)
 {
   PetscErrorCode ierr;
-  PetscInt N,i,state,Istart,Iend,nrows,local_bits,nonlocal_mask;
+  PetscInt N,i,idx,lidx,state,Istart,Iend,nrows,local_bits,nonlocal_mask;
   int mpi_rank,mpi_size;
   PetscInt d_nz,o_nz;
+  map_ctx *c = NULL;
 
   PetscInt lstate,sign;
   PetscScalar tmp_val;
 
-  N = 1<<L;
-
   MPI_Comm_rank(PETSC_COMM_WORLD,&mpi_rank);
   MPI_Comm_size(PETSC_COMM_WORLD,&mpi_size);
+
+  /* build map context if we need it */
+  if (sz == -1) {
+    N = 1<<L;
+  }
+  else {
+    ierr = BuildMapCtx(L,sz,&c);CHKERRQ(ierr);
+    N = MaxIdx(c);
+  }
 
   ierr = MatCreate(PETSC_COMM_WORLD,A);CHKERRQ(ierr);
   ierr = MatSetSizes(*A,PETSC_DECIDE,PETSC_DECIDE,N,N);CHKERRQ(ierr);
   ierr = MatSetFromOptions(*A);CHKERRQ(ierr);
 
   nrows = PETSC_DECIDE;
-  PetscSplitOwnership(PETSC_COMM_WORLD,&nrows,&N);
+  ierr = PetscSplitOwnership(PETSC_COMM_WORLD,&nrows,&N);CHKERRQ(ierr);
+  Iend = (mpi_rank+1)*(N/mpi_size);
+  /* this will underestimate when rows are not evenly split -- that's ok */
 
   /* find how many spins are local, for allocation purposes */
+  /* won't be perfect for spin-conserving subspace, but it doesn't have to be */
+  /* get it close, and PETSc can allocate any extra memory it needs */
+  if (c != NULL) {
+    ierr = BuildMapArray(Iend-1,Iend,c);CHKERRQ(ierr);
+    Iend = MapForwardSingle(c,Iend-1);
+  }
+
   local_bits = 0;
-  while(nrows >>= 1) ++local_bits;
+  while(Iend >>= 1) ++local_bits;
+
+  if (c != NULL) {
+    ++local_bits;
+  }
 
   /* now count how many terms are not on our processor */
 
@@ -47,33 +68,67 @@ PetscErrorCode BuildMat_Full(PetscInt L,PetscInt nterms,PetscInt* masks,PetscInt
     else ++d_nz;
   }
 
-  /* it seems from the documentation you can just call both of these and it will use the right one */
   ierr = MatSeqAIJSetPreallocation(*A,d_nz,NULL);CHKERRQ(ierr);
   ierr = MatMPIAIJSetPreallocation(*A,d_nz,NULL,o_nz,NULL);CHKERRQ(ierr);
 
+  if (c != NULL) {
+    ierr = MatSetOption(*A, MAT_NEW_NONZERO_ALLOCATION_ERR, PETSC_FALSE);CHKERRQ(ierr);
+  }
+
   ierr = MatGetOwnershipRange(*A,&Istart,&Iend);CHKERRQ(ierr);
 
-  /* this is where the magic happens */
-  for (state=Istart;state<Iend;++state) {
-    for (i=0;i<nterms;) {
-      lstate = state ^ masks[i];
-      tmp_val = 0;
-      /* sum all terms for this matrix element */
-      do {
-        /* this requires gcc builtins */
-        sign = 1 - 2*(__builtin_popcount(state & signs[i]) % 2);
-        tmp_val += sign * coeffs[i];
-        ++i;
-      } while (i<nterms && masks[i-1] == masks[i]);
+  if (c != NULL) {
+    ierr = BuildMapArray(Istart,Iend,c);CHKERRQ(ierr);
+  }
 
-      /* the elements must not be repeated or else INSERT_VALUES is wrong! */
-      /* I could just use ADD_VALUES but if they are repeated there is a bug somewhere else */
-      ierr = MatSetValues(*A,1,&lstate,1,&state,&tmp_val,INSERT_VALUES);CHKERRQ(ierr);
+  /* this is where the magic happens */
+  if (c == NULL) {
+    for (state=Istart;state<Iend;++state) {
+      for (i=0;i<nterms;) {
+        lstate = state ^ masks[i];
+        tmp_val = 0;
+        /* sum all terms for this matrix element */
+        do {
+          /* this requires gcc builtins */
+          sign = 1 - 2*(__builtin_popcount(state & signs[i]) % 2);
+          tmp_val += sign * coeffs[i];
+          ++i;
+        } while (i<nterms && masks[i-1] == masks[i]);
+
+        /* the elements must not be repeated or else INSERT_VALUES is wrong! */
+        /* I could just use ADD_VALUES but if they are repeated there is a bug somewhere else */
+        ierr = MatSetValues(*A,1,&lstate,1,&state,&tmp_val,INSERT_VALUES);CHKERRQ(ierr);
+      }
+    }
+  }
+  else {
+    for (idx=Istart;idx<Iend;++idx) {
+      for (i=0;i<nterms;) {
+        state = MapForwardSingle(c,idx);
+        lidx = MapReverseSingle(c,state ^ masks[i]);
+        if (lidx == -1) {
+          ++i;
+          continue;
+        }
+
+        tmp_val = 0;
+        do {
+          sign = 1 - 2*(__builtin_popcount(state & signs[i]) % 2);
+          tmp_val += sign * coeffs[i];
+          ++i;
+        } while (i<nterms && masks[i-1] == masks[i]);
+
+        ierr = MatSetValues(*A,1,&lidx,1,&idx,&tmp_val,INSERT_VALUES);CHKERRQ(ierr);
+      }
     }
   }
 
   ierr = MatAssemblyBegin(*A,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
   ierr = MatAssemblyEnd(*A,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
+
+  if (c != NULL) {
+    ierr = FreeMapCtx(c);CHKERRQ(ierr);
+  }
 
   return ierr;
 
@@ -314,6 +369,79 @@ PetscErrorCode ReducedDensityMatrix(PetscInt L,
         m[i*cut_N + j] += a*PetscConj(b);
       }
     }
+  }
+
+  ierr = VecRestoreArrayRead(x,&x_array);CHKERRQ(ierr);
+
+  return ierr;
+
+}
+
+#undef  __FUNCT__
+#define __FUNCT__ "ReducedDensityMatrix_SC"
+PetscErrorCode ReducedDensityMatrix_SC(PetscInt L,
+                                       PetscInt sz,
+                                       Vec x,
+                                       PetscInt cut_size,
+                                       PetscBool fillall,
+                                       PetscScalar* m)
+{
+  const PetscScalar *x_array;
+  PetscInt i,j,k,jmax,cut_sz,tr_sz;
+  PetscInt istate,jstate,kstate;
+  PetscInt cut_N,tr_N,tr_size,cut_full_N;
+  PetscScalar a,b;
+  PetscErrorCode ierr;
+  map_ctx *cut_c,*tr_c,*c;
+
+  tr_size = L - cut_size;
+  cut_full_N = 1 << cut_size;
+
+  /* this is the global mapping */
+  ierr = BuildMapCtx(L,sz,&c);CHKERRQ(ierr);
+
+  ierr = VecGetArrayRead(x,&x_array);CHKERRQ(ierr);
+
+  for (cut_sz=PetscMax(0,cut_size-(L-sz));cut_sz<=PetscMin(sz,cut_size);++cut_sz) {
+    tr_sz = sz - cut_sz;
+    ierr = BuildMapCtx(cut_size,cut_sz,&cut_c);CHKERRQ(ierr);
+    ierr = BuildMapCtx(tr_size,tr_sz,&tr_c);CHKERRQ(ierr);
+
+    cut_N = MaxIdx(cut_c);
+    tr_N = MaxIdx(tr_c);
+
+    ierr = BuildMapArray(0,cut_N,cut_c);CHKERRQ(ierr);
+    ierr = BuildMapArray(0,tr_N,tr_c);CHKERRQ(ierr);
+
+    for (i=0;i<cut_N;++i) {
+
+      istate = MapForwardSingle(cut_c,i);
+
+      jmax = cut_N;
+      for (j=0;j<jmax;++j) {
+
+        jstate = MapForwardSingle(cut_c,j);
+
+        if (!fillall && jstate > istate) continue;
+
+        for (k=0;k<tr_N;++k) {
+
+          kstate = MapForwardSingle(tr_c,k);
+
+          /*
+           * if this takes too long I could always just
+           * expand my vector into the full space and use
+           * a little more memory
+           */
+          a = x_array[MapReverseSingle(c,(istate<<tr_size) + kstate)];
+          b = x_array[MapReverseSingle(c,(jstate<<tr_size) + kstate)];
+
+          m[istate*cut_full_N + jstate] += a*PetscConj(b);
+        }
+      }
+    }
+    ierr = FreeMapCtx(cut_c);CHKERRQ(ierr);
+    ierr = FreeMapCtx(tr_c);CHKERRQ(ierr);
   }
 
   ierr = VecRestoreArrayRead(x,&x_array);CHKERRQ(ierr);

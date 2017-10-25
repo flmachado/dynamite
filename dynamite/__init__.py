@@ -9,8 +9,9 @@ class _Config:
     """
 
     initialized = False
-    _global_L = None
-    _global_shell = False
+    _L = None
+    _shell = False
+    _sz = None
 
     def initialize(self,slepc_args=None):
         """
@@ -46,13 +47,13 @@ class _Config:
         unless they are explicitly set to a different size. Is **not** retroactive---
         will not set the size for any objects that have already been created.
         """
-        return self._global_L
+        return self._L
 
     @global_L.setter
     def global_L(self,value):
 
         if value is None:
-            self._global_L = value
+            self._L = value
             return
 
         L = int(value)
@@ -61,7 +62,7 @@ class _Config:
         if L < 1:
             raise ValueError('L must be >= 1.')
 
-        self._global_L = L
+        self._L = L
 
     @property
     def global_shell(self):
@@ -70,7 +71,7 @@ class _Config:
         PETSc matrices (False, default). Experimental support for GPU shell matrices ('gpu')
         is also included if the package could find a CUDA compiler during build.
         """
-        return self._global_shell
+        return self._shell
 
     @global_shell.setter
     def global_shell(self,value):
@@ -90,7 +91,26 @@ class _Config:
                 raise RuntimeError('GPU shell matrices not enabled (could not find nvcc '
                                    'during build)')
 
-        self._global_shell = value
+        self._shell = value
+
+    @property
+    def global_sz(self):
+        """
+        The number of "up" spins in a spin-conserving subspace to be used globally.
+        Note that dynamite does NOT check if operators are actually spin-conserving--
+        it just ignores non-spin conserving terms if this value is set!
+        """
+        return self._sz
+
+    @global_sz.setter
+    def global_sz(self,value):
+        if value is not None and self.global_L is None:
+            raise ValueError('Must set global_L before setting global_sz')
+
+        elif value is not None and (value > self.global_L or value < 0):
+            raise ValueError('global_sz must be between 0 and global_L.')
+
+        self._sz = value
 
 
 config = _Config()

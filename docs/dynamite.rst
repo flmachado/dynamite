@@ -6,5 +6,6 @@ Full API documentation
    dynamite.operators
    dynamite.computations
    dynamite.tools
+   dynamite.spinconserve
    dynamite.extras
    dynamite.config

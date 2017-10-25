@@ -21,7 +21,7 @@ import numpy as np
 
 from petsc4py.PETSc import Vec, COMM_WORLD
 
-from .backend.backend import build_mat,destroy_shell_context,MSC_dtype
+from .backend.backend import build_mat,destroy_shell_context,MSC_dtype,max_idx
 from .computations import evolve,eigsolve
 from ._utils import qtp_identity_product,condense_terms,coeff_to_str,MSC_matrix_product
 
@@ -51,7 +51,7 @@ class Operator:
         self._MSC = None
         self._diag_entries = False
         self._shell = config.global_shell
-
+        self._sz = config.global_sz
 
     ### computation functions
 
@@ -162,13 +162,15 @@ class Operator:
     @property
     def dim(self):
         """
-        Read-only attribute returning the dimension :math:`d = 2^L` of the matrix,
+        Read-only attribute returning the dimension (number of rows) of the matrix,
         or ``None`` if ``L`` is ``None``.
         """
-        if self._L is None:
+        if self.L is None:
             return None
-        else:
+        elif self.sz is None:
             return 1<<self._L
+        else:
+            return max_idx(self.L,self.sz)
 
     @property
     def nnz(self):
@@ -211,6 +213,26 @@ class Operator:
             self.destroy_mat()
         self._shell = value
 
+    @property
+    def sz(self):
+        """
+        The number of up spins in a spin-conserving subspace. Dynamite
+        does NOT check if the Hamiltonian actually conserves spin!
+        """
+        return self._sz
+
+    @sz.setter
+    def sz(self,value):
+        if self.L is None:
+            raise ValueError('Must set operator size before setting subspace sz.')
+        elif value is not None and (value < 0 or value > self.L):
+            raise ValueError('sz must be between 0 and the operator size L.')
+
+        if value != self._sz:
+            self.destroy_mat()
+
+        self._sz = value
+
     ### copy
 
     def copy(self):
@@ -230,6 +252,7 @@ class Operator:
         o.needs_parens = self.needs_parens
         o.coeff = self.coeff
         o.use_shell = self.use_shell
+        o.sz = self.sz
         return o
 
     def _copy(self):
@@ -284,6 +307,9 @@ class Operator:
         if self.L is None:
             raise ValueError('Must set number of spins (Operator.L) before building PETSc matrix.')
 
+        if self.sz is not None and self.use_shell:
+            raise TypeError('Spin conserving subspace currently not supported for shell matrices.')
+
         self.destroy_mat()
 
         term_array = self.get_MSC()
@@ -299,6 +325,7 @@ class Operator:
             self._diag_entries = True
 
         self._mat = build_mat(self.L,
+                              self.sz if self.sz is not None else -1,
                               np.ascontiguousarray(term_array['masks']),
                               np.ascontiguousarray(term_array['signs']),
                               np.ascontiguousarray(term_array['coeffs']),

@@ -207,7 +207,7 @@ def eigsolve(H,getvecs=False,nev=1,which=None,target=None):
     for i in range(nconv):
         if getvecs:
             v = PETSc.Vec().create()
-            v.setSizes(1<<H.L)
+            v.setSizes(H.dim)
             v.setFromOptions()
         evals[i] = eps.getEigenpair(i,v)
         if getvecs:
@@ -218,7 +218,7 @@ def eigsolve(H,getvecs=False,nev=1,which=None,target=None):
     else:
         return evals
 
-def reduced_density_matrix(v,cut_size,fillall=True):
+def reduced_density_matrix(v,cut_size,L=None,sz=None,fillall=True):
     """
     Compute the reduced density matrix of a state vector by
     tracing out some set of spins. Currently only supports
@@ -240,6 +240,15 @@ def reduced_density_matrix(v,cut_size,fillall=True):
         :math:`L-n` spins will be traced out, resulting in a density
         matrix of dimension :math:`2^n {\\times} 2^n`.
 
+    L : int, optional
+        The spin-chain length. Ignored unless using a spin-conserving
+        subspace (in which case it is preferred to use ``config.global_L``).
+
+    sz : int, optional
+        The spin-conserving subspace on which the vector was built. It is
+        preferred to use ``config.global_sz`` rather than passing this directly
+        into the function.
+
     fillall : bool,optional
         Whether to fill the whole matrix. Since it will be Hermitian,
         only the lower triangle is necessary to describe the whole matrix.
@@ -251,13 +260,23 @@ def reduced_density_matrix(v,cut_size,fillall=True):
         The density matrix
     """
 
-    L = v.getSize().bit_length() - 1
+    if sz is None:
+        sz = config.global_sz
+
+    if sz is None:
+        L = v.getSize().bit_length() - 1
+    else:
+        if L is None:
+            L = config.global_L
+        if L is None:
+            raise ValueError('Must pass L when using spin-conserving subspace.')
+
     if cut_size != int(cut_size) or not 0 <= cut_size <= L:
         raise ValueError('cut_size must be an integer between 0 and L, inclusive.')
 
-    return bknd.reduced_density_matrix(v,cut_size,fillall=fillall)
+    return bknd.reduced_density_matrix(v,L,-1 if sz is None else sz,cut_size,fillall=fillall)
 
-def entanglement_entropy(v,cut_size):
+def entanglement_entropy(v,cut_size,L=None,sz=None):
     """
     Compute the entanglement of a state across some cut on the
     spin chain. To be precise, this is the bipartite entropy of
@@ -279,6 +298,15 @@ def entanglement_entropy(v,cut_size):
         the cut will be made between the spins at index ``cut_size-1``
         and ``cut_size``.
 
+    L : int, optional
+        The spin-chain length. Ignored unless using a spin-conserving
+        subspace (in which case it is preferred to use ``config.global_L``).
+
+    sz : int, optional
+        The spin-conserving subspace on which the vector was built. It is
+        preferred to use ``config.global_sz`` rather than passing this directly
+        into the function.
+
     Returns
     -------
 
@@ -286,7 +314,7 @@ def entanglement_entropy(v,cut_size):
         The entanglement entropy
     """
 
-    reduced = reduced_density_matrix(v,cut_size,fillall=False)
+    reduced = reduced_density_matrix(v,cut_size,L,sz,fillall=False)
 
     if reduced is None:
         return -1

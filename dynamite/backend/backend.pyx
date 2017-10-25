@@ -14,6 +14,7 @@ cdef extern from "backend_impl.h":
     ctypedef float PetscLogDouble
 
     int BuildMat_Full(PetscInt L,
+                      PetscInt sz,
                       np.int_t nterms,
                       PetscInt* masks,
                       PetscInt* signs,
@@ -28,14 +29,20 @@ cdef extern from "backend_impl.h":
                        PetscMat *A)
 
     int DestroyContext(PetscMat A)
+    int MatShellGetContext(PetscMat,void* ctx)
 
     int ReducedDensityMatrix(PetscInt L,
                              PetscVec x,
                              PetscInt cut_size,
                              bint fillall,
                              np.complex128_t* m)
-    int MatShellGetContext(PetscMat,void* ctx)
 
+    int ReducedDensityMatrix_SC(PetscInt L,
+                                PetscInt sz,
+                                PetscVec x,
+                                PetscInt cut_size,
+                                bint fillall,
+                                np.complex128_t* m)
 
     int PetscMemoryGetCurrentUsage(PetscLogDouble* mem)
     int PetscMallocGetCurrentUsage(PetscLogDouble* mem)
@@ -59,9 +66,22 @@ cdef extern from "shellcontext.h":
     ctypedef struct shell_context:
         PetscBool gpu
 
+cdef extern from "mapping.h":
+    ctypedef struct map_ctx:
+        int *choose
+    int BuildMapCtx(int,int,map_ctx**)
+    int BuildMapArray(int,int,map_ctx*)
+    int FreeMapCtx(map_ctx*)
+    inline int MaxIdx(map_ctx*)
+    inline int MapForwardSingle(map_ctx*,int)
+    inline int MapForward(map_ctx*,int,int*,int*)
+    inline int MapReverseSingle(map_ctx*,int)
+    inline int MapReverse(map_ctx*,int,int*,int*)
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def build_mat(int L,
+              int sz,
               np.ndarray[PetscInt,mode="c"] masks not None,
               np.ndarray[PetscInt,mode="c"] signs not None,
               np.ndarray[np.complex128_t,mode="c"] coeffs not None,
@@ -82,12 +102,106 @@ def build_mat(int L,
     elif shell:
         ierr = BuildMat_Shell(L,n,&masks[0],&signs[0],&coeffs[0],&M.mat)
     else:
-        ierr = BuildMat_Full(L,n,&masks[0],&signs[0],&coeffs[0],&M.mat)
+        ierr = BuildMat_Full(L,sz,n,&masks[0],&signs[0],&coeffs[0],&M.mat)
 
     if ierr != 0:
         raise Error(ierr)
 
     return M
+
+def max_idx(int L,int sz):
+    cdef int ierr,rtn;
+    cdef map_ctx *c;
+
+    ierr = BuildMapCtx(L,sz,&c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    rtn = MaxIdx(c)
+
+    ierr = ierr or FreeMapCtx(c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    return rtn
+
+def map_forward_single(int L,int sz,PetscInt idx):
+    cdef map_ctx *c;
+    cdef int ierr;
+    cdef PetscInt rtn;
+
+    ierr = BuildMapCtx(L,sz,&c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    ierr = BuildMapArray(idx,idx+1,c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    rtn = MapForwardSingle(c,idx)
+
+    ierr = FreeMapCtx(c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    return rtn
+
+def map_forward(int L,int sz,np.ndarray[PetscInt,mode="c"] idxs not None):
+    cdef map_ctx *c;
+    cdef int ierr;
+    cdef np.ndarray[PetscInt] rtn;
+
+    ierr = BuildMapCtx(L,sz,&c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    ierr = BuildMapArray(np.amin(idxs),np.amax(idxs)+1,c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    rtn = np.ndarray(idxs.shape[0],dtype=idxs.dtype)
+    MapForward(c,idxs.size,&idxs[0],&rtn[0])
+
+    ierr = FreeMapCtx(c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    return rtn
+
+def map_reverse_single(int L,int sz,PetscInt state):
+    cdef map_ctx *c;
+    cdef int ierr;
+    cdef PetscInt rtn;
+
+    ierr = BuildMapCtx(L,sz,&c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    rtn = MapReverseSingle(c,state)
+
+    ierr = FreeMapCtx(c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    return rtn
+
+def map_reverse(int L,int sz,np.ndarray[PetscInt,mode="c"] states not None):
+    cdef map_ctx *c;
+    cdef int ierr;
+    cdef np.ndarray[PetscInt] rtn;
+
+    ierr = BuildMapCtx(L,sz,&c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    rtn = np.ndarray(states.shape[0],dtype=states.dtype)
+    MapReverse(c,states.size,&states[0],&rtn[0])
+
+    ierr = FreeMapCtx(c)
+    if ierr != 0:
+        raise Error(ierr)
+
+    return rtn
 
 def destroy_shell_context(Mat A):
     cdef int ierr
@@ -230,11 +344,11 @@ def product_of_terms(np.ndarray[MSC_t,ndim=1] factors):
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def reduced_density_matrix(Vec v,int cut_size,bint fillall=True):
+def reduced_density_matrix(Vec v,int L,int sz,int cut_size,bint fillall=True):
 
     # cut_size: number of spins to include in reduced system
     # currently, those will be spins 0 to cut_size-1
-    cdef int red_size,ierr,L
+    cdef int red_size,ierr
     cdef np.ndarray[np.complex128_t,ndim=2] reduced
     cdef Vec v0
     cdef Scatter sc
@@ -249,15 +363,17 @@ def reduced_density_matrix(Vec v,int cut_size,bint fillall=True):
     if v0.getSize() == 0:
         return None
 
-    # get L from the vector's size
-    L = v0.getSize().bit_length() - 1
-
     red_size = 2**cut_size
+
     reduced = np.zeros((red_size,red_size),dtype=np.complex128,order='C')
 
     # note: eigvalsh only uses one triangle of the matrix, so allow
     # to only fill half of it
-    ierr = ReducedDensityMatrix(L,v0.vec,cut_size,fillall,&reduced[0,0])
+    if sz == -1:
+        ierr = ReducedDensityMatrix(L,v0.vec,cut_size,fillall,&reduced[0,0])
+    else:
+        ierr = ReducedDensityMatrix_SC(L,sz,v0.vec,cut_size,fillall,&reduced[0,0])
+
     if ierr != 0:
         raise Error(ierr)
 
