@@ -35,16 +35,17 @@ PetscErrorCode BuildMat_Full(PetscInt L,PetscInt sz,PetscInt nterms,PetscInt* ma
 
   nrows = PETSC_DECIDE;
   ierr = PetscSplitOwnership(PETSC_COMM_WORLD,&nrows,&N);CHKERRQ(ierr);
-  Iend = (mpi_rank+1)*(N/mpi_size);
-  /* this will underestimate when rows are not evenly split -- that's ok */
 
   /* find how many spins are local, for allocation purposes */
   /* won't be perfect for spin-conserving subspace, but it doesn't have to be */
   /* get it close, and PETSc can allocate any extra memory it needs */
   if (c != NULL) {
+    Iend = (mpi_rank+1)*(N/mpi_size);
+    /* this will underestimate when rows are not evenly split -- that's ok */
     ierr = BuildMapArray(Iend-1,Iend,c);CHKERRQ(ierr);
     Iend = MapForwardSingle(c,Iend-1);
   }
+  else Iend = nrows;
 
   local_bits = 0;
   while(Iend >>= 1) ++local_bits;

@@ -223,7 +223,7 @@ class Operator:
 
     @sz.setter
     def sz(self,value):
-        if self.L is None:
+        if value is not None and self.L is None:
             raise ValueError('Must set operator size before setting subspace sz.')
         elif value is not None and (value < 0 or value > self.L):
             raise ValueError('sz must be between 0 and the operator size L.')

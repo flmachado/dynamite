@@ -805,10 +805,12 @@ class Config(ut.TestCase):
 if __name__ == '__main__':
 
     # only get output from one process
-    from sys import stderr
-    from os import devnull
-    if PROC_0:
-        stream = stderr
-    else:
-        stream = open(devnull,'w')
-    ut.main(testRunner=ut.TextTestRunner(stream=stream))
+    # from sys import stderr
+    # from os import devnull
+    # if PROC_0:
+    #     stream = stderr
+    # else:
+    #     stream = open(devnull,'w')
+    # ut.main(testRunner=ut.TextTestRunner(stream=stream))
+
+    ut.main()
