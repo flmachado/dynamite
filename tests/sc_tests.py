@@ -294,29 +294,29 @@ class Entropy(ut.TestCase):
                         idxs = idx_to_state(np.arange(state.size))
                         sc_vec = vectonumpy(state)
 
-                        if sc_vec is None:
-                            continue
+                        if sc_vec is not None:
+                            # only do this on process 0
 
-                        for i,v in zip(idxs,sc_vec):
-                            np_vec[i] = v
+                            for i,v in zip(idxs,sc_vec):
+                                np_vec[i] = v
 
-                        if ddm is None:
-                            continue
+                            qtp_state = qtp.Qobj(np_vec,dims=[[2]*config.global_L,
+                                                              [1]*config.global_L])
 
-                        qtp_state = qtp.Qobj(np_vec,dims=[[2]*config.global_L,
-                                                          [1]*config.global_L])
+                            dm = qtp_state * qtp_state.dag()
 
-                        dm = qtp_state * qtp_state.dag()
-
-                        if cut > 0:
-                            dm = dm.ptrace(list(range(cut)))
-                            qtp_EE = qtp.entropy_vn(dm)
-                            dm = dm.full()
+                            if cut > 0:
+                                dm = dm.ptrace(list(range(cut)))
+                                qtp_EE = qtp.entropy_vn(dm)
+                                dm = dm.full()
+                            else:
+                                # qutip breaks when you ask it to trace out everything
+                                # maybe I should submit a pull request to them
+                                dm = np.array([[1.+0.0j]])
+                                qtp_EE = 0
                         else:
-                            # qutip breaks when you ask it to trace out everything
-                            # maybe I should submit a pull request to them
-                            dm = np.array([[1.+0.0j]])
-                            qtp_EE = 0
+                            dm = None
+                            qtp_EE = None
 
                         r,msg = check_allclose(dm,ddm)
                         msg += '\nnumpy:\n'+str(dm)+'\ndynamite:\n'+str(ddm)
