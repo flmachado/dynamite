@@ -272,6 +272,7 @@ class Entropy(ut.TestCase):
     def setUp(self):
         config.global_L = 6
         self.cuts = [0,1,3]
+        self.shifts = [0,2,4]
         self.sz = [1,3,4]
         self.states = OrderedDict([
             ('product0',{'idx':0}),
@@ -281,49 +282,58 @@ class Entropy(ut.TestCase):
 
     def test_dm_entropy(self):
         for cut in self.cuts:
-            for name,state_args in self.states.items():
-                for sz in self.sz:
-                    with self.subTest(cut=cut,state=name,sz=sz):
-                        config.global_sz = sz
-                        state = build_state(**state_args)
+            for shift in self.shifts:
+                for name,state_args in self.states.items():
+                    for sz in self.sz:
+                        with self.subTest(cut=cut,state=name,sz=sz,shift=shift):
+                            config.global_sz = sz
+                            state = build_state(**state_args)
 
-                        ddm = reduced_density_matrix(state,cut)
-                        dy_EE = entanglement_entropy(state,cut)
-
-                        np_vec = np.zeros(2**config.global_L,dtype=np.complex128)
-                        idxs = idx_to_state(np.arange(state.size))
-                        sc_vec = vectonumpy(state)
-
-                        if sc_vec is not None:
-                            # only do this on process 0
-
-                            for i,v in zip(idxs,sc_vec):
-                                np_vec[i] = v
-
-                            qtp_state = qtp.Qobj(np_vec,dims=[[2]*config.global_L,
-                                                              [1]*config.global_L])
-
-                            dm = qtp_state * qtp_state.dag()
-
-                            if cut > 0:
-                                dm = dm.ptrace(list(range(cut)))
-                                qtp_EE = qtp.entropy_vn(dm)
-                                dm = dm.full()
+                            if cut + shift > config.global_L:
+                                with self.assertRaises(ValueError):
+                                    ddm = reduced_density_matrix(state,cut,start=shift)
+                                with self.assertRaises(ValueError):
+                                    dy_EE = entanglement_entropy(state,cut,start=shift)
+                                continue
                             else:
-                                # qutip breaks when you ask it to trace out everything
-                                # maybe I should submit a pull request to them
-                                dm = np.array([[1.+0.0j]])
-                                qtp_EE = 0
-                        else:
-                            dm = None
-                            qtp_EE = None
+                                ddm = reduced_density_matrix(state,cut,start=shift)
+                                dy_EE = entanglement_entropy(state,cut,start=shift)
 
-                        r,msg = check_allclose(dm,ddm)
-                        msg += '\nnumpy:\n'+str(dm)+'\ndynamite:\n'+str(ddm)
-                        self.assertTrue(r,msg=msg)
+                            np_vec = np.zeros(2**config.global_L,dtype=np.complex128)
+                            idxs = idx_to_state(np.arange(state.size))
+                            sc_vec = vectonumpy(state)
 
-                        r,msg = check_close(qtp_EE,dy_EE)
-                        self.assertTrue(r,msg=msg)
+                            if sc_vec is not None:
+                                # only do this on process 0
+
+                                for i,v in zip(idxs,sc_vec):
+                                    np_vec[i] = v
+
+                                qtp_state = qtp.Qobj(np_vec,dims=[[2]*config.global_L,
+                                                                  [1]*config.global_L])
+
+                                dm = qtp_state * qtp_state.dag()
+
+                                if cut > 0:
+                                    dm = dm.ptrace(list(range(config.global_L-cut-shift,
+                                                              config.global_L-shift)))
+                                    qtp_EE = qtp.entropy_vn(dm)
+                                    dm = dm.full()
+                                else:
+                                    # qutip breaks when you ask it to trace out everything
+                                    # maybe I should submit a pull request to them
+                                    dm = np.array([[1.+0.0j]])
+                                    qtp_EE = 0
+                            else:
+                                dm = None
+                                qtp_EE = None
+
+                            r,msg = check_allclose(dm,ddm)
+                            msg += '\nnumpy:\n'+str(dm)+'\ndynamite:\n'+str(ddm)
+                            self.assertTrue(r,msg=msg)
+
+                            r,msg = check_close(qtp_EE,dy_EE)
+                            self.assertTrue(r,msg=msg)
 
     def tearDown(self):
         config.global_sz = None

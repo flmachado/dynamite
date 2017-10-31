@@ -664,6 +664,7 @@ class Entropy(ut.TestCase):
     def setUp(self):
         self.L = 4
         self.cuts = [0,1,2,4]
+        self.shifts = [0,1,2]
         self.states = OrderedDict([
             ('product0',build_state(L=self.L)),
             ('product1',
@@ -680,35 +681,43 @@ class Entropy(ut.TestCase):
 
     def test_dm_entropy(self):
         for cut in self.cuts:
-            for name,state in self.states.items():
-                with self.subTest(cut=cut,state=name):
-                    ddm = reduced_density_matrix(state,cut)
-                    dy_EE = entanglement_entropy(state,cut)
+            for shift in self.shifts:
+                for name,state in self.states.items():
+                    with self.subTest(cut=cut,state=name,shift=shift):
+                        if cut + shift > self.L:
+                            with self.assertRaises(ValueError):
+                                ddm = reduced_density_matrix(state,cut,start=shift)
+                            with self.assertRaises(ValueError):
+                                dy_EE = entanglement_entropy(state,cut,start=shift)
+                            continue
+                        else:
+                            ddm = reduced_density_matrix(state,cut,start=shift)
+                            dy_EE = entanglement_entropy(state,cut,start=shift)
 
-                    qtp_state = qtp.Qobj(vectonumpy(state),
-                                         dims=[[2]*self.L,
-                                               [1]*self.L])
+                        qtp_state = qtp.Qobj(vectonumpy(state),
+                                             dims=[[2]*self.L,
+                                                   [1]*self.L])
 
-                    dm = qtp_state * qtp_state.dag()
+                        dm = qtp_state * qtp_state.dag()
 
-                    if cut > 0:
-                        dm = dm.ptrace(list(range(cut)))
-                    else:
-                        # qutip breaks when you ask it to trace out everything
-                        # maybe I should submit a pull request to them
-                        dm = None
+                        if cut > 0:
+                            dm = dm.ptrace(list(range(self.L-cut-shift,self.L-shift)))
+                        else:
+                            # qutip breaks when you ask it to trace out everything
+                            # maybe I should submit a pull request to them
+                            dm = None
 
-                    if dm is not None:
-                        r,msg = check_allclose(dm.full(),ddm)
+                        if dm is not None:
+                            r,msg = check_allclose(dm.full(),ddm)
+                            self.assertTrue(r,msg=msg)
+                            qtp_EE = qtp.entropy_vn(dm)
+                        else:
+                            r,msg = check_allclose(ddm,np.array([[1.+0.0j]]))
+                            self.assertTrue(r,msg=msg)
+                            qtp_EE = 0
+
+                        r,msg = check_close(qtp_EE,dy_EE)
                         self.assertTrue(r,msg=msg)
-                        qtp_EE = qtp.entropy_vn(dm)
-                    else:
-                        r,msg = check_allclose(ddm,np.array([[1.+0.0j]]))
-                        self.assertTrue(r,msg=msg)
-                        qtp_EE = 0
-
-                    r,msg = check_close(qtp_EE,dy_EE)
-                    self.assertTrue(r,msg=msg)
 
 class Utils(ut.TestCase):
 

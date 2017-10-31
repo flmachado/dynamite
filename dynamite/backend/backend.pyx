@@ -34,6 +34,7 @@ cdef extern from "backend_impl.h":
     int ReducedDensityMatrix(PetscInt L,
                              PetscVec x,
                              PetscInt cut_size,
+                             PetscInt start,
                              bint fillall,
                              np.complex128_t* m)
 
@@ -41,6 +42,7 @@ cdef extern from "backend_impl.h":
                                 PetscInt sz,
                                 PetscVec x,
                                 PetscInt cut_size,
+                                PetscInt start,
                                 bint fillall,
                                 np.complex128_t* m)
 
@@ -344,7 +346,7 @@ def product_of_terms(np.ndarray[MSC_t,ndim=1] factors):
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def reduced_density_matrix(Vec v,int L,int sz,int cut_size,bint fillall=True):
+def reduced_density_matrix(Vec v,int L,int sz,int cut_size,int start,bint fillall=True):
 
     # cut_size: number of spins to include in reduced system
     # currently, those will be spins 0 to cut_size-1
@@ -370,9 +372,9 @@ def reduced_density_matrix(Vec v,int L,int sz,int cut_size,bint fillall=True):
     # note: eigvalsh only uses one triangle of the matrix, so allow
     # to only fill half of it
     if sz == -1:
-        ierr = ReducedDensityMatrix(L,v0.vec,cut_size,fillall,&reduced[0,0])
+        ierr = ReducedDensityMatrix(L,v0.vec,cut_size,start,fillall,&reduced[0,0])
     else:
-        ierr = ReducedDensityMatrix_SC(L,sz,v0.vec,cut_size,fillall,&reduced[0,0])
+        ierr = ReducedDensityMatrix_SC(L,sz,v0.vec,cut_size,start,fillall,&reduced[0,0])
 
     if ierr != 0:
         raise Error(ierr)

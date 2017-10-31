@@ -333,11 +333,12 @@ PetscErrorCode DestroyContext(Mat A)
 PetscErrorCode ReducedDensityMatrix(PetscInt L,
                                     Vec x,
                                     PetscInt cut_size,
+                                    PetscInt start,
                                     PetscBool fillall,
                                     PetscScalar* m)
 {
   const PetscScalar *x_array;
-  PetscInt i,j,k,jmax;
+  PetscInt i,j,k,jmax,rmask,lmask,k_tmp;
   PetscInt cut_N,tr_N,tr_size;
   PetscScalar a,b;
   PetscErrorCode ierr;
@@ -346,6 +347,10 @@ PetscErrorCode ReducedDensityMatrix(PetscInt L,
   tr_size = L - cut_size; /* in case L is odd */
   cut_N = 1 << cut_size;
   tr_N = 1 << tr_size;
+
+  /* compute the masks */
+  rmask = (1<<start) - 1;
+  lmask = ((1<<(tr_size-start))-1) << start;
 
   /*
     Fill the reduced density matrix!
@@ -364,8 +369,11 @@ PetscErrorCode ReducedDensityMatrix(PetscInt L,
     for (j=0;j<jmax;++j) {
 
       for (k=0;k<tr_N;++k) {
-        a = x_array[(i<<tr_size) + k];
-        b = x_array[(j<<tr_size) + k];
+
+        k_tmp = (k & rmask) | ((k & lmask) << cut_size);
+
+        a = x_array[(i<<start) | k_tmp];
+        b = x_array[(j<<start) | k_tmp];
 
         m[i*cut_N + j] += a*PetscConj(b);
       }
@@ -384,11 +392,12 @@ PetscErrorCode ReducedDensityMatrix_SC(PetscInt L,
                                        PetscInt sz,
                                        Vec x,
                                        PetscInt cut_size,
+                                       PetscInt start,
                                        PetscBool fillall,
                                        PetscScalar* m)
 {
   const PetscScalar *x_array;
-  PetscInt i,j,k,jmax,cut_sz,tr_sz;
+  PetscInt i,j,k,jmax,rmask,lmask,k_tmp,cut_sz,tr_sz;
   PetscInt istate,jstate,kstate;
   PetscInt cut_N,tr_N,tr_size,cut_full_N;
   PetscScalar a,b;
@@ -397,6 +406,9 @@ PetscErrorCode ReducedDensityMatrix_SC(PetscInt L,
 
   tr_size = L - cut_size;
   cut_full_N = 1 << cut_size;
+
+  rmask = (1<<start) - 1;
+  lmask = ((1<<(tr_size-start))-1) << start;
 
   /* this is the global mapping */
   ierr = BuildMapCtx(L,sz,&c);CHKERRQ(ierr);
@@ -428,14 +440,15 @@ PetscErrorCode ReducedDensityMatrix_SC(PetscInt L,
         for (k=0;k<tr_N;++k) {
 
           kstate = MapForwardSingle(tr_c,k);
+          k_tmp = (kstate & rmask) | ((kstate & lmask) << cut_size);
 
           /*
            * if this takes too long I could always just
            * expand my vector into the full space and use
            * a little more memory
            */
-          a = x_array[MapReverseSingle(c,(istate<<tr_size) + kstate)];
-          b = x_array[MapReverseSingle(c,(jstate<<tr_size) + kstate)];
+          a = x_array[MapReverseSingle(c,(istate<<start) | k_tmp)];
+          b = x_array[MapReverseSingle(c,(jstate<<start) | k_tmp)];
 
           m[istate*cut_full_N + jstate] += a*PetscConj(b);
         }

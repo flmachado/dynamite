@@ -12,7 +12,7 @@ PetscErrorCode MatNorm_Shell(Mat A,NormType type,PetscReal *nrm);
 PetscErrorCode BuildContext(PetscInt L,PetscInt nterms,PetscInt* masks,PetscInt* signs,PetscScalar* coeffs,shell_context **ctx_p);
 PetscErrorCode DestroyContext(Mat A);
 
-PetscErrorCode ReducedDensityMatrix(PetscInt L,Vec x,PetscInt cut_size,PetscBool fillall,PetscScalar* m);
-PetscErrorCode ReducedDensityMatrix_SC(PetscInt L,PetscInt sz,Vec x,PetscInt cut_size,PetscBool fillall,PetscScalar* m);
+PetscErrorCode ReducedDensityMatrix(PetscInt L,Vec x,PetscInt cut_size,PetscInt start,PetscBool fillall,PetscScalar* m);
+PetscErrorCode ReducedDensityMatrix_SC(PetscInt L,PetscInt sz,Vec x,PetscInt cut_size,PetscInt start,PetscBool fillall,PetscScalar* m);
 
 #endif /* !BACKEND_H */

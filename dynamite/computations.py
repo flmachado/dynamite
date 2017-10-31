@@ -218,13 +218,12 @@ def eigsolve(H,getvecs=False,nev=1,which=None,target=None):
     else:
         return evals
 
-def reduced_density_matrix(v,cut_size,L=None,sz=None,fillall=True):
+def reduced_density_matrix(v,cut_size,start=0,L=None,sz=None,fillall=True):
     """
     Compute the reduced density matrix of a state vector by
-    tracing out some set of spins. Currently only supports
-    tracing out a certain number of spins, but not specifying
-    which will be removed. (Spins with indices 0 to cut_size-1
-    are traced out in the current implementation).
+    tracing out some set of spins. The set to trace out is specified
+    by ``cut_size`` and ``start``: the spins with indices 0 to ``start``-1,
+    and from ``start + cut_size`` to ``L`` will be traced out.
 
     The density matrix is returned on process 0, the function
     returns ``None`` on all other processes.
@@ -239,6 +238,9 @@ def reduced_density_matrix(v,cut_size,L=None,sz=None,fillall=True):
         The number of spins to keep. So, for ``cut_size``:math:`=n`,
         :math:`L-n` spins will be traced out, resulting in a density
         matrix of dimension :math:`2^n {\\times} 2^n`.
+
+    start : int
+        The first spin to keep.
 
     L : int, optional
         The spin-chain length. Ignored unless using a spin-conserving
@@ -271,19 +273,22 @@ def reduced_density_matrix(v,cut_size,L=None,sz=None,fillall=True):
         if L is None:
             raise ValueError('Must pass L when using spin-conserving subspace.')
 
-    if cut_size != int(cut_size) or not 0 <= cut_size <= L:
+    if not 0 <= cut_size <= L:
         raise ValueError('cut_size must be an integer between 0 and L, inclusive.')
 
-    return bknd.reduced_density_matrix(v,L,-1 if sz is None else sz,cut_size,fillall=fillall)
+    if start < 0 or start+cut_size > L:
+        raise ValueError('start must be set such that start>=0 and start+cut_size does not exceed L.')
 
-def entanglement_entropy(v,cut_size,L=None,sz=None):
+    return bknd.reduced_density_matrix(v,L,-1 if sz is None else sz,cut_size,start,fillall=fillall)
+
+def entanglement_entropy(v,cut_size,start=0,L=None,sz=None):
     """
     Compute the entanglement of a state across some cut on the
     spin chain. To be precise, this is the bipartite entropy of
     entanglement.
 
     Currently, this quantity is computed entirely on process 0.
-    As a result, the function returns ``-1`` on all other processes.
+    The result is broadcast to all other processes.
     Ideally, at some point a parallelized dense matrix solver will
     be used in this computation.
 
@@ -297,6 +302,9 @@ def entanglement_entropy(v,cut_size,L=None,sz=None):
         The number of spins on one side of the cut. To be precise,
         the cut will be made between the spins at index ``cut_size-1``
         and ``cut_size``.
+
+    start : int
+        The first spin to keep.
 
     L : int, optional
         The spin-chain length. Ignored unless using a spin-conserving
@@ -314,12 +322,14 @@ def entanglement_entropy(v,cut_size,L=None,sz=None):
         The entanglement entropy
     """
 
-    reduced = reduced_density_matrix(v,cut_size,L,sz,fillall=False)
+    reduced = reduced_density_matrix(v,cut_size,start,L,sz,fillall=False)
 
-    if reduced is None:
-        return -1
+    if reduced is not None:
+        w = np.linalg.eigvalsh(reduced)
+        EE = -np.sum(w * np.log(w,where=w>0))
+    else:
+        EE = None
 
-    w = np.linalg.eigvalsh(reduced)
-    EE = -np.sum(w * np.log(w,where=w>0))
+    EE = PETSc.COMM_WORLD.tompi4py().bcast(EE,0)
 
     return EE
