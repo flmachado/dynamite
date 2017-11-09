@@ -288,7 +288,7 @@ def entanglement_entropy(v,cut_size,start=0,L=None,sz=None):
     entanglement.
 
     Currently, this quantity is computed entirely on process 0.
-    The result is broadcast to all other processes.
+    All other processes return None.
     Ideally, at some point a parallelized dense matrix solver will
     be used in this computation.
 
@@ -329,7 +329,5 @@ def entanglement_entropy(v,cut_size,start=0,L=None,sz=None):
         EE = -np.sum(w * np.log(w,where=w>0))
     else:
         EE = None
-
-    EE = PETSc.COMM_WORLD.tompi4py().bcast(EE,0)
 
     return EE
