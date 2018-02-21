@@ -261,4 +261,7 @@ def reduced_density_matrix(Vec v,int cut_size,bint fillall=True):
     if ierr != 0:
         raise Error(ierr)
 
+    sc.destroy()
+    v0.destroy()
+
     return reduced
